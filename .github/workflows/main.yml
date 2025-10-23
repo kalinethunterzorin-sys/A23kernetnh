@@ -4,8 +4,8 @@ on:
   push:
     branches: [ main, master ]
   schedule:
-    - cron: '0 2 * * *'  # Compila diariamente a las 2 AM UTC
-  workflow_dispatch:    # Permite ejecución manual
+    - cron: '0 2 * * *'
+  workflow_dispatch:
 
 jobs:
   build:
@@ -16,6 +16,15 @@ jobs:
       uses: actions/checkout@v4
       with:
         submodules: recursive
+        
+    - name: Explorar estructura del repositorio
+      run: |
+        echo "📁 Estructura del repositorio:"
+        find . -type f -name "*defconfig" | head -20
+        echo "📁 Directorios principales:"
+        ls -la
+        echo "📁 Directorio arch:"
+        find . -name "arch" -type d | head -5
         
     - name: Instalar dependencias
       run: |
@@ -36,82 +45,87 @@ jobs:
         echo "ARCH=arm64" >> $GITHUB_ENV
         echo "CROSS_COMPILE=aarch64-linux-gnu-" >> $GITHUB_ENV
         
-    - name: Buscar configuración del kernel
+    - name: Buscar y configurar kernel
       run: |
         echo "🔍 Buscando archivos de configuración..."
-        find . -name "*defconfig" -type f | head -10
         
-    - name: Compilar kernel
-      run: |
-        # Intentar diferentes configuraciones
-        if [ -f "arch/arm64/configs/a23_eur_open_defconfig" ]; then
-          echo "📝 Usando a23_eur_open_defconfig"
-          make a23_eur_open_defconfig ARCH=arm64
-        elif [ -f "arch/arm64/configs/spes_defconfig" ]; then
-          echo "📝 Usando spes_defconfig"
+        # Buscar defconfig en diferentes ubicaciones posibles
+        if [ -f "arch/arm64/configs/spes_defconfig" ]; then
+          echo "📝 Usando arch/arm64/configs/spes_defconfig"
           make spes_defconfig ARCH=arm64
-        elif [ -f "arch/arm64/configs/vendor/spes_defconfig" ]; then
-          echo "📝 Usando vendor/spes_defconfig"
-          make vendor/spes_defconfig ARCH=arm64
+        elif [ -f "arch/arm64/configs/a23_defconfig" ]; then
+          echo "📝 Usando arch/arm64/configs/a23_defconfig"
+          make a23_defconfig ARCH=arm64
+        elif [ -f "defconfig" ]; then
+          echo "📝 Usando defconfig en raíz"
+          cp defconfig .config
+        elif [ -f ".config" ]; then
+          echo "📝 Usando .config existente"
         else
-          echo "📝 Usando primera defconfig encontrada"
-          FIRST_CONFIG=$(find arch/arm64/configs -name "*defconfig" | head -1)
-          if [ -n "$FIRST_CONFIG" ]; then
-            CONFIG_NAME=$(basename "$FIRST_CONFIG" .defconfig)
-            echo "📝 Usando: $CONFIG_NAME"
-            make $CONFIG_NAME ARCH=arm64
+          echo "🔍 Buscando cualquier defconfig..."
+          DEFCONFIG=$(find . -name "*defconfig" -type f | grep -v ".git" | head -1)
+          if [ -n "$DEFCONFIG" ]; then
+            echo "📝 Usando: $DEFCONFIG"
+            cp "$DEFCONFIG" .config
           else
-            echo "❌ No se encontró archivo de configuración"
+            echo "❌ No se encontró ningún archivo de configuración"
+            echo "📁 Lista completa de archivos:"
+            find . -type f -name "*.config" -o -name "*defconfig" | head -20
             exit 1
           fi
         fi
         
-        # Compilar el kernel
+    - name: Compilar kernel
+      run: |
         echo "🔨 Compilando kernel..."
         make -j$(nproc) ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu-
         
-    - name: Verificar archivos compilados
+    - name: Buscar archivos compilados
       run: |
-        echo "📁 Archivos compilados:"
-        find arch/arm64/boot -type f -name "Image*" | head -10
+        echo "📁 Buscando archivos del kernel compilado..."
+        find . -name "Image*" -type f | head -10
+        find . -name "*.dtb" -type f | head -10
+        find . -name "vmlinux" -type f | head -5
         
-    - name: Empaquetar kernel
+    - name: Empaquetar resultados
       run: |
         mkdir -p output
-        # Copiar archivos compilados
-        cp arch/arm64/boot/Image* output/ 2>/dev/null || true
-        find arch/arm64/boot -name "Image*" -type f -exec cp {} output/ \; 2>/dev/null || true
         
-        # Crear ZIP flasheable
+        # Buscar y copiar archivos compilados en diferentes ubicaciones
+        find . -name "Image.gz-dtb" -type f -exec cp {} output/ \; 2>/dev/null || true
+        find . -name "Image" -type f -exec cp {} output/ \; 2>/dev/null || true
+        find . -name "vmlinux" -type f -exec cp {} output/ \; 2>/dev/null || true
+        
+        # Si no se encontraron archivos, crear un archivo de error
+        if [ -z "$(ls -A output)" ]; then
+          echo "⚠️ No se encontraron archivos compilados"
+          echo "Esto puede ser normal si la compilación falló" > output/error.txt
+        fi
+        
+        # Crear ZIP
         cd output
-        zip -9 A23-NetHunter-Kernel-$(date +%Y%m%d-%H%M).zip *
-        echo "📦 ZIP creado: A23-NetHunter-Kernel-$(date +%Y%m%d-%H%M).zip"
+        zip -9 A23-Kernel-$(date +%Y%m%d-%H%M).zip *
         
     - name: Subir artifacts
       uses: actions/upload-artifact@v4
       with:
-        name: kernel-compiled
+        name: kernel-build
         path: output/*
         retention-days: 30
         
-    - name: Crear release
-      if: success()
+    - name: Crear release si hay archivos
+      if: success() && hash('output/*.zip')
       uses: softprops/action-gh-release@v1
       with:
-        files: output/*
+        files: output/*.zip
         body: |
-          # NetHunter Kernel para A23
-          **Compilado automáticamente desde GitHub Actions**
+          # A23 NetHunter Kernel
+          **Compilación automática desde GitHub Actions**
           
-          - **Fecha:** $(date + '%Y-%m-%d %H:%M')
-          - **Kernel:** A23 NetHunter
-          - **Compilador:** aarch64-linux-gnu-gcc
+          - **Fecha:** $(date +'%Y-%m-%d %H:%M')
+          - **Estado:** Compilación completada
           
-          ## Descarga
-          Extrae el ZIP y flashea en tu dispositivo A23.
-          
-          ## Archivos incluidos
-          - Image.gz-dtb (Kernel principal)
-          - Otros archivos del kernel compilado
-        tag_name: build-$(date +%Y%m%d-%H%M)
+          ## Notas
+          Descarga el ZIP y verifica los archivos incluidos.
+        tag_name: auto-$(date +%Y%m%d-%H%M)
         prerelease: true
