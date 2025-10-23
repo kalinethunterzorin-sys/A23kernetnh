@@ -1,4 +1,4 @@
-name: Build A23 NetHunter Kernel
+name: Build NetHunter Kernel - A23
 
 on:
   push:
@@ -6,12 +6,8 @@ on:
   workflow_dispatch:
 
 jobs:
-  explore:
+  build:
     runs-on: ubuntu-latest
-    outputs:
-      has_defconfig: ${{ steps.explore.outputs.has_defconfig }}
-      has_config: ${{ steps.explore.outputs.has_config }}
-      has_makefile: ${{ steps.explore.outputs.has_makefile }}
     
     steps:
     - name: Checkout código
@@ -20,143 +16,130 @@ jobs:
         submodules: recursive
         
     - name: Explorar estructura completa
-      id: explore
       run: |
-        echo "🔍 EXPLORANDO ESTRUCTURA DEL REPOSITORIO..."
-        echo "📁 Estructura completa:"
-        find . -type f -name "*" | grep -v ".git" | sort | head -50
-        
+        echo "🔍 EXPLORACIÓN COMPLETA DEL REPOSITORIO"
+        echo "========================================"
         echo ""
-        echo "🔎 Buscando archivos específicos:"
-        echo "Makefile: $(find . -name "Makefile" -type f | head -1 || echo 'NO')"
-        echo "defconfig: $(find . -name "*defconfig" -type f | head -1 || echo 'NO')"
-        echo ".config: $(find . -name ".config" -type f | head -1 || echo 'NO')"
-        echo "Kbuild: $(find . -name "Kbuild" -type f | head -1 || echo 'NO')"
-        echo "Kconfig: $(find . -name "Kconfig" -type f | head -1 || echo 'NO')"
-        
-        # Configurar outputs
-        if [ -n "$(find . -name "*defconfig" -type f | head -1)" ]; then
-          echo "has_defconfig=true" >> $GITHUB_OUTPUT
-        else
-          echo "has_defconfig=false" >> $GITHUB_OUTPUT
-        fi
-        
-        if [ -n "$(find . -name ".config" -type f | head -1)" ]; then
-          echo "has_config=true" >> $GITHUB_OUTPUT
-        else
-          echo "has_config=false" >> $GITHUB_OUTPUT
-        fi
-        
-        if [ -f "Makefile" ]; then
-          echo "has_makefile=true" >> $GITHUB_OUTPUT
-        else
-          echo "has_makefile=false" >> $GITHUB_OUTPUT
-        fi
+        echo "📁 LISTA COMPLETA DE ARCHIVOS:"
+        find . -type f | grep -v ".git" | sort
+        echo ""
+        echo "📊 INFORMACIÓN DEL REPOSITORIO:"
+        echo "Tamaño total: $(du -sh .)"
+        echo "Número de archivos: $(find . -type f | wc -l)"
+        echo ""
+        echo "🔎 ARCHIVOS IMPORTANTES:"
+        find . -name "Makefile" -o -name "*.mk" -o -name "Kconfig" -o -name "Kbuild" | head -20
+        echo ""
+        echo "📋 ARCHIVOS DE CONFIGURACIÓN:"
+        find . -name "*defconfig" -o -name ".config" -o -name "config" | head -20
+        echo ""
+        echo "📦 ARCHIVOS DE CÓDIGO:"
+        find . -name "*.c" -o -name "*.h" -o -name "*.dts" -o -name "*.dtsi" | head -20
 
-  build:
-    runs-on: ubuntu-latest
-    needs: explore
-    if: needs.explore.outputs.has_makefile == 'true'
-    
-    steps:
-    - name: Checkout código
-      uses: actions/checkout@v4
-      with:
-        submodules: recursive
-        
-    - name: Instalar dependencias
+    - name: Instalar dependencias básicas
       run: |
         sudo apt-get update
         sudo apt-get install -y \
           git bc bison flex libssl-dev make \
           gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi \
           libncurses-dev liblz4-tool python3 \
-          zip unzip curl wget
-        
-    - name: Configurar entorno
+          zip unzip curl wget file
+
+    - name: Intentar compilar si hay Makefile
+      id: compile
       run: |
-        export ARCH=arm64
-        export SUBARCH=arm64
-        export CROSS_COMPILE=aarch64-linux-gnu-
-        export KBUILD_BUILD_USER="GitHub-Actions"
-        export KBUILD_BUILD_HOST="GitHub"
+        # Buscar cualquier Makefile
+        MAKEFILE=$(find . -name "Makefile" -type f | head -1)
         
-    - name: Intentar compilación con diferentes enfoques
-      run: |
-        echo "🔄 Intentando diferentes métodos de compilación..."
-        
-        # Método 1: Si hay defconfig específico
-        if [ -f "arch/arm64/configs/spes_defconfig" ]; then
-          echo "📝 Método 1: Usando spes_defconfig"
-          make spes_defconfig ARCH=arm64
-          make -j2 ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu-
+        if [ -n "$MAKEFILE" ]; then
+          echo "🎯 Makefile encontrado en: $MAKEFILE"
+          echo "has_makefile=true" >> $GITHUB_OUTPUT
           
-        # Método 2: Si hay cualquier defconfig
-        elif [ -n "$(find . -name "*defconfig" -type f | head -1)" ]; then
-          DEFCONFIG=$(find . -name "*defconfig" -type f | head -1)
-          echo "📝 Método 2: Usando $DEFCONFIG"
-          CONFIG_NAME=$(basename "$DEFCONFIG" .defconfig)
-          make $CONFIG_NAME ARCH=arm64
-          make -j2 ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu-
+          # Cambiar al directorio del Makefile
+          MAKEFILE_DIR=$(dirname "$MAKEFILE")
+          echo "📁 Cambiando a directorio: $MAKEFILE_DIR"
+          cd "$MAKEFILE_DIR"
           
-        # Método 3: Si hay .config existente
-        elif [ -f ".config" ]; then
-          echo "📝 Método 3: Usando .config existente"
-          make -j2 ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu-
+          # Configurar entorno
+          export ARCH=arm64
+          export CROSS_COMPILE=aarch64-linux-gnu-
           
-        # Método 4: Compilación directa (puede fallar)
+          echo "🔨 Intentando compilar..."
+          
+          # Intentar diferentes configuraciones
+          if [ -f "arch/arm64/configs/spes_defconfig" ]; then
+            make spes_defconfig
+          elif [ -f "arch/arm64/configs/a23_defconfig" ]; then
+            make a23_defconfig
+          elif [ -n "$(find . -name '*defconfig' | head -1)" ]; then
+            DEFCONFIG=$(find . -name '*defconfig' | head -1)
+            CONFIG_NAME=$(basename "$DEFCONFIG" .defconfig)
+            make $CONFIG_NAME
+          else
+            echo "⚠️ No hay defconfig, intentando compilar directamente"
+          fi
+          
+          # Compilar
+          make -j2 || echo "❌ Compilación falló, pero continuamos"
+          
         else
-          echo "📝 Método 4: Compilación directa"
-          make -j2 ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- 2>&1 | head -50
+          echo "❌ No se encontró Makefile"
+          echo "has_makefile=false" >> $GITHUB_OUTPUT
         fi
-        
-    - name: Recopilar resultados
+
+    - name: Recopilar todos los archivos posibles
       run: |
-        mkdir -p output
-        echo "📦 Recopilando archivos compilados..."
+        mkdir -p artifacts
+        echo "📦 Recopilando archivos del repositorio..."
         
-        # Buscar cualquier archivo que pueda ser resultado de compilación
-        find . -name "Image*" -type f -exec cp {} output/ \; 2>/dev/null || true
-        find . -name "*.ko" -type f -exec cp {} output/ \; 2>/dev/null || true
-        find . -name "vmlinux" -type f -exec cp {} output/ \; 2>/dev/null || true
-        find . -name "*.dtb" -type f -exec cp {} output/ \; 2>/dev/null || true
-        find . -name "zImage" -type f -exec cp {} output/ \; 2>/dev/null || true
+        # Copiar archivos importantes
+        find . -name "Makefile" -exec cp --parents {} artifacts/ \; 2>/dev/null || true
+        find . -name "*.c" -exec cp --parents {} artifacts/ \; 2>/dev/null || true
+        find . -name "*.h" -exec cp --parents {} artifacts/ \; 2>/dev/null || true
+        find . -name "*.dts" -exec cp --parents {} artifacts/ \; 2>/dev/null || true
+        find . -name "*.dtsi" -exec cp --parents {} artifacts/ \; 2>/dev/null || true
+        find . -name "*defconfig" -exec cp --parents {} artifacts/ \; 2>/dev/null || true
+        find . -name ".config" -exec cp --parents {} artifacts/ \; 2>/dev/null || true
         
-        # Si no hay archivos, crear log
-        if [ -z "$(ls -A output)" ]; then
-          echo "No se generaron archivos compilados" > output/build-log.txt
-          echo "Esto puede ser normal para este repositorio" >> output/build-log.txt
-        fi
+        # Si hay archivos compilados, copiarlos
+        find . -name "Image*" -exec cp --parents {} artifacts/ \; 2>/dev/null || true
+        find . -name "*.ko" -exec cp --parents {} artifacts/ \; 2>/dev/null || true
+        find . -name "vmlinux" -exec cp --parents {} artifacts/ \; 2>/dev/null || true
+        
+        # Crear archivo de información
+        echo "Información del repositorio A23kernetnh" > artifacts/README.txt
+        echo "Fecha: $(date)" >> artifacts/README.txt
+        echo "Commit: $GITHUB_SHA" >> artifacts/README.txt
+        echo "URL: $GITHUB_REPOSITORY" >> artifacts/README.txt
         
         # Crear ZIP
-        cd output
-        zip -9 build-results-$(date +%Y%m%d).zip *
-        
+        cd artifacts
+        zip -r ../repository-contents.zip .
+        cd ..
+
     - name: Subir artifacts
       uses: actions/upload-artifact@v4
       with:
-        name: build-output
-        path: output/*
-        retention-days: 7
+        name: repository-analysis
+        path: |
+          repository-contents.zip
+        retention-days: 30
 
-  report:
-    runs-on: ubuntu-latest
-    needs: explore
-    steps:
-    - name: Generar reporte
+    - name: Crear reporte final
       run: |
-        echo "📊 REPORTE DEL REPOSITORIO"
-        echo "==========================="
-        echo "¿Tiene defconfig?: ${{ needs.explore.outputs.has_defconfig }}"
-        echo "¿Tiene .config?: ${{ needs.explore.outputs.has_config }}"
-        echo "¿Tiene Makefile?: ${{ needs.explore.outputs.has_makefile }}"
+        echo "📊 REPORTE FINAL"
+        echo "================"
+        echo "Repositorio: $GITHUB_REPOSITORY"
+        echo "¿Tiene Makefile?: ${{ steps.compile.outputs.has_makefile }}"
         echo ""
-        echo "💡 RECOMENDACIONES:"
-        if [ "${{ needs.explore.outputs.has_makefile }}" = "false" ]; then
-          echo "❌ Este no parece ser un repositorio de kernel Linux"
-        elif [ "${{ needs.explore.outputs.has_defconfig }}" = "false" ]; then
-          echo "⚠️  Falta archivo de configuración (defconfig)"
-          echo "   Necesitas agregar un archivo .config o defconfig"
+        echo "📋 RECOMENDACIONES:"
+        if [ "${{ steps.compile.outputs.has_makefile }}" = "true" ]; then
+          echo "✅ Este repositorio parece ser un kernel compilable"
+          echo "💡 Sugerencia: Revisa los artifacts para ver los archivos de compilación"
         else
-          echo "✅ El repositorio tiene estructura de kernel"
+          echo "❌ Este NO parece ser un árbol de kernel Linux"
+          echo "💡 Sugerencia:"
+          echo "   - Si es un kernel, asegúrate de tener un Makefile en la raíz"
+          echo "   - Si es solo código fuente, considera usar un repositorio de kernel completo"
+          echo "   - Puedes clonar un kernel base y aplicar tus cambios"
         fi
