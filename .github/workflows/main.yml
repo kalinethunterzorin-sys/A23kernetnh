@@ -1,0 +1,117 @@
+name: Build A23 NetHunter Kernel
+
+on:
+  push:
+    branches: [ main, master ]
+  schedule:
+    - cron: '0 2 * * *'  # Compila diariamente a las 2 AM UTC
+  workflow_dispatch:    # Permite ejecución manual
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout código
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive
+        
+    - name: Instalar dependencias
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          git bc bison flex libssl-dev make \
+          gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi \
+          libncurses-dev liblz4-tool python3 \
+          zip unzip curl wget
+        
+    - name: Configurar entorno
+      run: |
+        export ARCH=arm64
+        export SUBARCH=arm64
+        export CROSS_COMPILE=aarch64-linux-gnu-
+        export KBUILD_BUILD_USER="GitHub-Actions"
+        export KBUILD_BUILD_HOST="GitHub"
+        echo "ARCH=arm64" >> $GITHUB_ENV
+        echo "CROSS_COMPILE=aarch64-linux-gnu-" >> $GITHUB_ENV
+        
+    - name: Buscar configuración del kernel
+      run: |
+        echo "🔍 Buscando archivos de configuración..."
+        find . -name "*defconfig" -type f | head -10
+        
+    - name: Compilar kernel
+      run: |
+        # Intentar diferentes configuraciones
+        if [ -f "arch/arm64/configs/a23_eur_open_defconfig" ]; then
+          echo "📝 Usando a23_eur_open_defconfig"
+          make a23_eur_open_defconfig ARCH=arm64
+        elif [ -f "arch/arm64/configs/spes_defconfig" ]; then
+          echo "📝 Usando spes_defconfig"
+          make spes_defconfig ARCH=arm64
+        elif [ -f "arch/arm64/configs/vendor/spes_defconfig" ]; then
+          echo "📝 Usando vendor/spes_defconfig"
+          make vendor/spes_defconfig ARCH=arm64
+        else
+          echo "📝 Usando primera defconfig encontrada"
+          FIRST_CONFIG=$(find arch/arm64/configs -name "*defconfig" | head -1)
+          if [ -n "$FIRST_CONFIG" ]; then
+            CONFIG_NAME=$(basename "$FIRST_CONFIG" .defconfig)
+            echo "📝 Usando: $CONFIG_NAME"
+            make $CONFIG_NAME ARCH=arm64
+          else
+            echo "❌ No se encontró archivo de configuración"
+            exit 1
+          fi
+        fi
+        
+        # Compilar el kernel
+        echo "🔨 Compilando kernel..."
+        make -j$(nproc) ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu-
+        
+    - name: Verificar archivos compilados
+      run: |
+        echo "📁 Archivos compilados:"
+        find arch/arm64/boot -type f -name "Image*" | head -10
+        
+    - name: Empaquetar kernel
+      run: |
+        mkdir -p output
+        # Copiar archivos compilados
+        cp arch/arm64/boot/Image* output/ 2>/dev/null || true
+        find arch/arm64/boot -name "Image*" -type f -exec cp {} output/ \; 2>/dev/null || true
+        
+        # Crear ZIP flasheable
+        cd output
+        zip -9 A23-NetHunter-Kernel-$(date +%Y%m%d-%H%M).zip *
+        echo "📦 ZIP creado: A23-NetHunter-Kernel-$(date +%Y%m%d-%H%M).zip"
+        
+    - name: Subir artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: kernel-compiled
+        path: output/*
+        retention-days: 30
+        
+    - name: Crear release
+      if: success()
+      uses: softprops/action-gh-release@v1
+      with:
+        files: output/*
+        body: |
+          # NetHunter Kernel para A23
+          **Compilado automáticamente desde GitHub Actions**
+          
+          - **Fecha:** $(date + '%Y-%m-%d %H:%M')
+          - **Kernel:** A23 NetHunter
+          - **Compilador:** aarch64-linux-gnu-gcc
+          
+          ## Descarga
+          Extrae el ZIP y flashea en tu dispositivo A23.
+          
+          ## Archivos incluidos
+          - Image.gz-dtb (Kernel principal)
+          - Otros archivos del kernel compilado
+        tag_name: build-$(date +%Y%m%d-%H%M)
+        prerelease: true
