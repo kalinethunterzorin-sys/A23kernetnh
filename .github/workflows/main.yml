@@ -1,9 +1,8 @@
-name: Build NetHunter
+name: Build NetHunter A23 Kernel
 
 on:
   push:
-    branches:
-      - main
+    branches: [ main ]
   workflow_dispatch:
 
 jobs:
@@ -14,11 +13,40 @@ jobs:
       - name: Checkout repo
         uses: actions/checkout@v3
 
-      - name: Set execute permissions and run build script
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y git bc bison flex libssl-dev make libc6-dev \
+            libncurses5-dev wget xz-utils zip unzip ccache curl
+
+      - name: Prepare build environment
+        shell: bash
+        run: |
+          mkdir -p build
+          cp -r ./* build/ || true
+          rm -rf build/build || true
+          cd build
+          chmod +x *.sh scripts/*.sh 2>/dev/null || true
+
+      - name: Run dependency script
+        working-directory: build
+        run: |
+          if [ -f download_dependencies.sh ]; then
+            echo "✅ Ejecutando download_dependencies.sh"
+            chmod +x download_dependencies.sh
+            ./download_dependencies.sh
+          elif [ -f scripts/download_dependencies.sh ]; then
+            echo "✅ Ejecutando scripts/download_dependencies.sh"
+            chmod +x scripts/download_dependencies.sh
+            ./scripts/download_dependencies.sh
+          else
+            echo "⚠️ No se encontró script de dependencias"
+          fi
+
+      - name: Run build script
+        working-directory: build
         run: |
           set -e
-
-          # Buscar scripts posibles
           if [ -f build_all_nethunter_a23.sh ]; then
               echo "✅ Ejecutando build_all_nethunter_a23.sh"
               chmod +x build_all_nethunter_a23.sh
@@ -31,4 +59,12 @@ jobs:
               echo "❌ No se encontró script de compilación"
               exit 1
           fi
-          
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: NetHunter-A23-Build
+          path: |
+            build/*.zip
+            build/*.sha256
+          if-no-files-found: warn
