@@ -1,66 +1,34 @@
-name: Build NetHunter A23 Kernel
+name: Build NetHunter
 
 on:
-  workflow_dispatch:
   push:
-    branches: [ main ]
+    branches:
+      - main
+  workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    name: NetHunter A23 Kernel Build
 
     steps:
-      - name: 📦 Checkout repository
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
+      - name: Checkout repo
+        uses: actions/checkout@v3
 
-      - name: ⚙️ Install build dependencies
+      - name: Set execute permissions and run build script
         run: |
-          sudo apt-get update
-          sudo apt-get install -y git bc bison flex libssl-dev make libc6-dev \
-            libncurses5-dev wget xz-utils zip unzip ccache curl
+          set -e
 
-      - name: 🧰 Prepare environment
-        shell: bash
-        run: |
-          mkdir -p build
-          cp -r ./* build/ || true
-          rm -rf build/build || true
-          cd build
-          chmod +x *.sh scripts/*.sh 2>/dev/null || true
-
-      - name: 🔽 Run dependency setup
-        working-directory: build
-        run: |
-          if [ -f download_dependencies.sh ]; then
-            ./download_dependencies.sh
-          elif [ -f scripts/download_dependencies.sh ]; then
-            ./scripts/download_dependencies.sh
-          else
-            echo "⚠️ No se encontró el script de dependencias"
-          fi
-
-      - name: 🛠️ Compile kernel
-        working-directory: build
-        run: |
+          # Buscar scripts posibles
           if [ -f build_all_nethunter_a23.sh ]; then
-            chmod +x build_all_nethunter_a23.sh
-            ./build_all_nethunter_a23.sh --ccache
+              echo "✅ Ejecutando build_all_nethunter_a23.sh"
+              chmod +x build_all_nethunter_a23.sh
+              ./build_all_nethunter_a23.sh --ccache
           elif [ -f compile_nethunter_kernel.sh ]; then
-            chmod +x compile_nethunter_kernel.sh
-            ./compile_nethunter_kernel.sh
+              echo "✅ Ejecutando compile_nethunter_kernel.sh"
+              chmod +x compile_nethunter_kernel.sh
+              ./compile_nethunter_kernel.sh
           else
-            echo "❌ No se encontró script de compilación"
-            exit 1
+              echo "❌ No se encontró script de compilación"
+              exit 1
           fi
-
-      - name: 📁 Upload build artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: NetHunter-A23-Build
-          path: |
-            build/*.zip
-            build/*.sha256
-          if-no-files-found: warn
+          
