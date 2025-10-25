@@ -25,7 +25,8 @@ jobs:
       - name: 🧰 Prepare environment
         run: |
           mkdir -p build
-          cp -r ./* build/
+          shopt -s extglob
+          cp -r !(build) build/
           cd build
           chmod +x *.sh scripts/*.sh 2>/dev/null || true
 
