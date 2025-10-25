@@ -23,10 +23,11 @@ jobs:
             libncurses5-dev wget xz-utils zip unzip ccache curl
 
       - name: 🧰 Prepare environment
+        shell: bash
         run: |
           mkdir -p build
-          shopt -s extglob
-          cp -r !(build) build/
+          cp -r ./* build/ || true
+          rm -rf build/build || true
           cd build
           chmod +x *.sh scripts/*.sh 2>/dev/null || true
 
